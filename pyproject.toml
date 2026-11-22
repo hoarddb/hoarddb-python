@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling>=1.26.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hoarddb"
+dynamic = ["version"]
+description = "Python driver for hoardDB"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = []
+classifiers = [
+    "Private :: Do Not Upload",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+[tool.hatch.version]
+path = "src/hoarddb/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hoarddb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "scripts", "tests"]
+addopts = "-ra"
+filterwarnings = ["error"]
+markers = [
+    "server: needs the pinned test server; set HOARDDB_SERVER_BIN=$(scripts/fetch-server.sh). Skip with -m 'not server'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+extend-exclude = ["docs", "handbook", "testdata", "testing", "README.md"]
+
+[tool.ruff.format]
+docstring-code-format = false
+# the two quick-starts are the spec's text byte for byte (a test compares them)
+exclude = ["examples/quickstart.py", "examples/quickstart_async.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "A", "C4", "SIM", "RUF", "PT"]
+ignore = ["PT018"]  # compound asserts are fine in tests
+
+[tool.ruff.lint.per-file-ignores]
+# the spec's text, byte for byte: its import order is the spec's
+"examples/quickstart_async.py" = ["I001"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "src:scripts:tests"
+files = ["src", "tests", "scripts", "examples"]
+# the spec's quick-starts, byte for byte, index a get() that can be None (Q21)
+exclude = ["examples/quickstart\\.py", "examples/quickstart_async\\.py"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"
+include = ["src", "tests", "scripts", "examples"]
+ignore = ["examples/quickstart.py", "examples/quickstart_async.py"]
+extraPaths = ["src", "scripts", "tests"]

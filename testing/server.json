@@ -1,0 +1,14 @@
+{
+  "tag": "test-server-5abce282d5eb",
+  "server_commit": "5abce282d5ebda882f49b628d9d8870e1780a656",
+  "assets": {
+    "linux-amd64": {
+      "name": "hoardDB-server-linux-amd64",
+      "sha256": "9a36bd17591ce7b343b66449b51343d92d7828830add9a1f5a638578df83961a"
+    },
+    "linux-arm64": {
+      "name": "hoardDB-server-linux-arm64",
+      "sha256": "55c0d0867f0dca544451fe7f85b0f47fb2ba4929f1cbbf26173a5d81983676f3"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci
+
+# Actions minutes are capped, so this runs only on a pull request, a version
+# tag, or when started by hand. Linux only, one Python version, no matrix.
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e . -r requirements-dev.txt
+      # -m "not server" skips the tests that need a running hoardDB server.
+      - run: python -m pytest -q -m "not server"
