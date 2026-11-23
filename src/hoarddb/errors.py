@@ -19,10 +19,12 @@ from typing import Any, ClassVar, Literal, TypedDict, Unpack
 __all__ = [
     "AlreadyExistsError",
     "AuthenticationError",
+    "BatchTooLargeError",
     "ClientClosedError",
     "ConfigError",
     "ConflictError",
     "ConnectionFailedError",
+    "DocumentExistsError",
     "DuplicateKeyError",
     "FieldTypeError",
     "ForkedClientError",
@@ -216,6 +218,23 @@ class DuplicateKeyError(HoardDBError):
 
 class FieldTypeError(HoardDBError):
     default_code = "FIELD_TYPE"
+
+
+class BatchTooLargeError(HoardDBError):
+    """A batch over the largest one the store commits whole. Nothing of it was stored
+    (``write_outcome`` is ``"not_applied"``), so sending it again in smaller parts is safe."""
+
+    default_code = "BATCH_TOO_LARGE"
+
+
+class DocumentExistsError(HoardDBError):
+    """A ``put``, an ``insert`` or an ``insert_many`` named a key that already holds a document.
+    Nothing was stored (``write_outcome`` is ``"not_applied"``): on a hash or btree bucket a put
+    inserts and never replaces.
+    Replace the document with ``upsert(key, doc)``, or change some of its fields with
+    ``update(key, ops)``."""
+
+    default_code = "DOCUMENT_EXISTS"
 
 
 class ConnectionFailedError(HoardDBError, ConnectionError):

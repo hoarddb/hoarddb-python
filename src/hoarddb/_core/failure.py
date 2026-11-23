@@ -77,6 +77,15 @@ HINT_OVERLOADED: Final = (
     "or raise HOARDDB_TCP_MAX_CONNS_PER_IP on the server."
 )
 HINT_TIMEOUT: Final = "The write is stored; do not resend a push or an increment."
+HINT_BATCH_TOO_LARGE: Final = (
+    "insert_many() splits such a batch for you; one document that is refused alone is too "
+    "large to store."
+)
+# The server's sentence quotes shell syntax; this is the same advice as calls of this driver.
+HINT_DOCUMENT_EXISTS: Final = (
+    "Nothing was stored: replace the document with `bucket.upsert(key, doc)`, or change some "
+    'of its fields with `bucket.update(key, {"$set": {...}})`.'
+)
 HINT_UNKNOWN_CODE: Final = "A newer server than this driver? Upgrade the driver."
 
 
@@ -153,6 +162,10 @@ def error_from_payload(
             return build(errors.DuplicateKeyError)
         case 16:
             return build(errors.FieldTypeError)
+        case 17:
+            return build(errors.BatchTooLargeError, hint=HINT_BATCH_TOO_LARGE)
+        case 18:
+            return build(errors.DocumentExistsError, hint=HINT_DOCUMENT_EXISTS)
         case 0 | 5:
             return build(errors.InternalError, hint=_internal_hint(request_id))
         case _:

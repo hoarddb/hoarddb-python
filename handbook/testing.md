@@ -226,6 +226,11 @@ later language too.
 
 ## 3. Getting a real server
 
+**No test-server binary is published yet**, so `scripts/fetch-server.sh` fails with HTTP 404. Build
+`hoarddb-server` (and the `hoarddb` command line, where a leg needs it) from
+`github.com/hoarddb/hoarddb-server` and set `HOARDDB_SERVER_BIN` (and `HOARDDB_CLI_BIN`). What follows
+describes the download for when a release carries one.
+
 The driver repositories do not contain the server's source. They test against the **server binary**,
 published as an asset of a release of the driver repository, and named, with its SHA-256, in
 `testing/server.json`:
@@ -263,6 +268,10 @@ SIGTERM, then SIGKILL after 15 s. Operator limits a leg needs are set the same w
 
 ### 3.2 Three nodes, on one machine
 
+**This recipe does not start a v1.1.0 server.** It selects the earlier engine's replicated mode
+(`HOARDDB_REPLICATION_FACTOR` with a seed list), which a v1.1.0 server refuses at start. It is kept for the
+server commit named in `testing/server.json`.
+
 Proven on loopback (three processes, one machine) with the server this handbook was derived from:
 
 1. For each node `nodeN`, make a data directory and write its identity into `<data dir>/keys/`: an
@@ -292,11 +301,9 @@ variables.
 
 ### 3.3 With containers
 
-`testing/compose/` holds the same three-node cluster as a compose file, built from a two-line image
-(`testing/compose/server.Dockerfile`: the fetched binary on a small base image) so no server source is
-needed. Its driver ports are published on `127.0.0.1:7433`, `7434` and `7435`. It needs a Docker daemon,
-which a CI runner has and a sandbox may not; the process recipe in 3.2 needs nothing but the binary, so
-it is the default.
+The Go repository's `testing/compose/` holds the same three-node cluster as a compose file. Like the
+recipe in 3.2 it starts the earlier engine's replicated mode and does not come up with a v1.1.0 binary.
+This repository has no compose file.
 
 ## 4. Test layers inside a driver
 
@@ -315,9 +322,9 @@ on by hand, watching it fail, and restoring the code exactly.
 
 ## 5. Continuous integration
 
-Every pull request runs: the unit, component and fuzz-seed tests with the race detector; the linter;
-the vulnerability check; the licence and boundary checks (the driver imports no server code; every
-source file carries the Apache-2.0 header; no third-party type appears in the public API; the only
-third-party module is the BSON codec; no other database product is named outside the allow-listed
-lines); and the conformance harness against the fetched server binary, one node and three. A red job
-blocks the merge.
+What a driver's pull-request checks are meant to cover: the unit, component and fuzz-seed tests with the
+race detector; the linter; the vulnerability check; and the licence and boundary checks (the driver
+imports no server code; every source file carries the Apache-2.0 header; no third-party type appears in
+the public API; no other database product is named outside the allow-listed lines). The conformance
+harness needs a server binary, so until a test-server binary is published it is run by hand against a
+binary built from source (section 3).

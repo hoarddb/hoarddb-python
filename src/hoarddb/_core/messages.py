@@ -58,7 +58,7 @@ class AuthOkResponse(Response):
 
 @model
 class WriteResponse(_Outcome):
-    """The answer to a put, an insert, a btree insert and every push."""
+    """The answer to a put, an upsert, an insert, a btree insert and every push."""
 
     id: str = ""
     success: bool = False
@@ -72,6 +72,7 @@ class BatchPutResponse(_Outcome):
     count: int = 0
     success: bool = False
     message: str = ""
+    results: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
 
 @model
@@ -110,13 +111,19 @@ class UpdateResponse(_Outcome):
     success: bool = False
     doc: dict[str, Any] | None = None
     message: str = ""
+    doc_omitted: bool = False  # set only inside a BATCH, which this driver does not send
 
 
 @model
 class PopResponse(_Outcome):
+    """The entries a pop removed, in pop order. There is no single-entry member: a pop of one
+    answers a one-item list."""
+
     found: bool = False
-    data: dict[str, Any] | None = None
+    items: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     message: str = ""
+    pending: int = 0  # entries held under a lease, which a pop does not take
+    dead: int = 0
 
 
 @model
@@ -124,6 +131,9 @@ class PeekResponse(Response):
     found: bool = False
     items: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     message: str = ""
+    pending: int = 0
+    dead: int = 0
+    expired: int = 0
 
 
 @model
@@ -163,6 +173,7 @@ class OkResponse(Response):
 
     success: bool = False
     message: str = ""
+    placement: str = ""  # CREATE_BUCKET only: how the server placed the bucket
 
 
 @model
@@ -186,6 +197,13 @@ class BucketRow:
     replication_factor: int | None = None
     inherited: bool = False
     outside: Any = None
+    # Where the bucket's copies stand, and its queue's held entries: display facts, kept as sent.
+    state: str = ""
+    in_sync: int = 0
+    not_in_sync: list[Any] = field(default_factory=list[Any])
+    pending_copies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    pending: int = 0
+    dead: int = 0
 
 
 @model
@@ -242,12 +260,26 @@ class BucketStatsResponse(Response):
     fields: list[DeclaredField] = field(default_factory=list[DeclaredField])
     field_types: str = ""
     writes_refused: bool = False
+    # Placement and copy state: display facts, kept as sent.
+    placement: str = ""
+    replication_factor: int | None = None
+    inherited: bool = False
+    state: str = ""
+    in_sync: int = 0
+    not_in_sync: list[Any] = field(default_factory=list[Any])
+    nodes: list[Any] = field(default_factory=list[Any])
+    pending_copies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    pending_copy: Any = None
+    previous_owner: Any = None
 
 
 @model
 class CountResponse(Response):
     count: int = 0
     message: str = ""
+    pending: int = 0
+    dead: int = 0
+    expired: int = 0
 
 
 @model
@@ -295,6 +327,8 @@ class HealthResponse(Response):
     membership_detail: Any = None
     store_refusal: str = ""
     host: dict[str, Any] | None = None
+    wal: dict[str, Any] | None = None
+    duplicates: Any = None
     reasons: list[Any] = field(default_factory=list[Any])
 
 
@@ -305,6 +339,7 @@ class NodeRow:
     fingerprint: str = ""
     joined_at: Any = wire("joinedat", default=None)
     status: str = ""
+    duplicate: Any = None
 
 
 @model
@@ -313,6 +348,9 @@ class ListNodesResponse(Response):
     history_reported: bool = False
     membership_history: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     schema_changes: dict[str, Any] | None = None
+    epoch: int = 0
+    member_count: int = 0
+    standalone: bool = False
 
 
 @model
@@ -426,6 +464,13 @@ class PutRequest(_KeyRequest):
 
 
 @model
+class UpsertRequest(PutRequest):
+    """PUT's replacing form: the same members, answered with ``UPSERT_OK``."""
+
+    OPCODE: ClassVar[int] = opcodes.UPSERT
+
+
+@model
 class BTreeInsertRequest(PutRequest):
     OPCODE: ClassVar[int] = opcodes.BTREE_INSERT
 
@@ -495,6 +540,7 @@ class HeapPushRequest(_PushRequest):
 
 @model
 class _PopRequest(_BucketRequest):
+    limit: int = 0  # absent means 1; the server takes at most 100
     write_concern: str = wire("writeconcern", default="")
 
 
@@ -705,6 +751,7 @@ class FieldPushRequest(_FieldRequest):
 @model
 class FieldPopRequest(_FieldRequest):
     OPCODE: ClassVar[int] = opcodes.FIELD_POP
+    limit: int = 0  # absent means 1; the server takes at most 100
 
 
 @model
@@ -776,6 +823,7 @@ class RawResponse(Response):
 _ANSWERS: tuple[tuple[type[Request], type[Any], tuple[int, ...]], ...] = (
     (AuthRequest, AuthOkResponse, (opcodes.AUTH_OK,)),
     (PutRequest, WriteResponse, (opcodes.PUT,)),
+    (UpsertRequest, WriteResponse, (opcodes.UPSERT_OK,)),
     (BTreeInsertRequest, WriteResponse, (opcodes.BTREE_INSERT,)),
     (GetRequest, GetResponse, (opcodes.GET_RESPONSE,)),
     (BTreeLookupRequest, GetResponse, (opcodes.BTREE_RESPONSE,)),

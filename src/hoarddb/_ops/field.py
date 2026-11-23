@@ -29,7 +29,13 @@ from hoarddb._core.messages import (
     Request,
 )
 from hoarddb._core.validate import check_count, check_name
-from hoarddb._ops.queue import MAX_PEEK, check_priority
+from hoarddb._ops.queue import (
+    MAX_PEEK,
+    check_pop_limit,
+    check_priority,
+    pop_answer,
+    unreadable_pop,
+)
 from hoarddb._ops.refs import BucketRef
 from hoarddb._ops.support import call, context, payload, require_mapping, write_concern
 from hoarddb.types import FieldBlob, FieldEntry, FieldWriteResult
@@ -111,15 +117,23 @@ def push(
     return _write(reply.response)
 
 
-def pop(ref: FieldRef, *, wc: str | None, timeout: float | None) -> Op[FieldEntry[Any] | None]:
+def pop(
+    ref: FieldRef, *, limit: int | None, wc: str | None, timeout: float | None
+) -> Op[list[FieldEntry[Any]]]:
     op = "field_pop"
     check_ref(ref, operation=op)
-    request = FieldPopRequest(**ref.common(), write_concern=write_concern(wc, None, operation=op))
+    request = FieldPopRequest(
+        **ref.common(),
+        limit=check_pop_limit(limit, operation=op),
+        write_concern=write_concern(wc, None, operation=op),
+    )
     c = call(op, ref.target, request, "WRITE", timeout)
-    reply = yield c
-    if not failure.check_found(payload(reply), reply.request_id, context(c)):
-        return None
-    return entry(reply.response)
+    reply = yield from pop_answer(c, request.limit)
+    r: FieldResponse = reply.response
+    found = failure.check_found(payload(reply), reply.request_id, context(c))
+    if found != bool(r.items):  # found with nothing to read, or entries beside "not found"
+        raise unreadable_pop(c)
+    return [entry(item) for item in r.items]
 
 
 def peek(ref: FieldRef, *, limit: int, timeout: float | None) -> Op[list[FieldEntry[Any]]]:

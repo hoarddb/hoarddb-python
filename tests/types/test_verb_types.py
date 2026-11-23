@@ -38,7 +38,7 @@ def _sync(client: hoarddb.Client) -> None:
     jobs = db.fifo("jobs")
     assert_type(jobs.push({"n": 1}), WriteResult)
     assert_type(jobs.push({"n": 1}, priority=3), WriteResult)
-    assert_type(jobs.pop(), dict[str, Any] | None)
+    assert_type(jobs.pop(), list[dict[str, Any]])
     assert_type(jobs.peek(limit=3), list[dict[str, Any]])
     assert_type(jobs.insert_many([{"n": 1}]), BatchResult)
     jobs.get("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
@@ -47,8 +47,8 @@ def _sync(client: hoarddb.Client) -> None:
     jobs.exists("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
     stack, heap = db.lifo("s"), db.heap("h")
-    assert_type(stack.pop(), dict[str, Any] | None)
-    assert_type(heap.pop(), dict[str, Any] | None)
+    assert_type(stack.pop(), list[dict[str, Any]])
+    assert_type(heap.pop(), list[dict[str, Any]])
     stack.get("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     heap.get("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
 
@@ -67,7 +67,7 @@ def _sync(client: hoarddb.Client) -> None:
 
     anything = db.bucket("any")  # the generic form has every verb
     assert_type(anything.get("k"), dict[str, Any] | None)
-    assert_type(anything.pop(), dict[str, Any] | None)
+    assert_type(anything.pop(), list[dict[str, Any]])
     assert_type(anything.put_blob("k", b""), BlobWriteResult)
 
     users.put("ada", {"name": "Ada", "born": 1}, write_concern="majority")
@@ -81,7 +81,7 @@ async def _async(client: hoarddb.aio.Client) -> None:
     assert_type(await users.put("ada", {"name": "Ada", "born": 1}), WriteResult)
     assert_type(await users.update("ada", {"$set": {"born": 2}}), User | None)
     jobs = db.fifo("jobs")
-    assert_type(await jobs.pop(), dict[str, Any] | None)
+    assert_type(await jobs.pop(), list[dict[str, Any]])
     assert_type(await jobs.peek(), list[dict[str, Any]])
     jobs.get("x")  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     files = db.blob("files")

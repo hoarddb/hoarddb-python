@@ -11,10 +11,8 @@ with hoarddb.connect() as client:
     tickets.push({"title": "site is down"}, priority=9)
     tickets.push({"title": "slow report"}, priority=5)
 
-    for _ in range(3):
-        ticket = tickets.pop()
-        assert ticket is not None
+    for ticket in tickets.pop(limit=3):  # the three highest priorities, in one request
         print(ticket["title"])  # site is down, slow report, typo in footer
-    print(tickets.pop())  # None
+    print(tickets.pop())  # []
 
     client.drop_database("example_heap")

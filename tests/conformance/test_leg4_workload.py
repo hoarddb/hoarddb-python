@@ -119,11 +119,19 @@ def workload(rig: Rig, store: str, database: str) -> tuple[Counts, list[Any]]:
             expected_order = order[::-1]
         else:  # highest priority first, and first in first out among equals
             expected_order = sorted(order, key=lambda i: (-(i % 5), order.index(i)))
-        for i in expected_order:
-            got = rig.call(lambda c: bucket(c).pop())
+        popped: list[Any] = []
+        for step in range(N):  # one at a time, then in tens: both forms of the same verb
+            taken = rig.call(
+                lambda c, limit=(None if step < 20 else 10): bucket(c).pop(limit=limit)
+            )
+            popped.extend(taken)
+            if len(popped) >= N:
+                break
+        popped += [None] * (N - len(popped))  # an entry the driver did not hand back is a miss
+        for i, got in zip(expected_order, popped, strict=True):
             counts.check(docs[i], None if got is None else without_id(got))
             read.append(None if got is None else shape(without_id(got)))
-        assert rig.call(lambda c: bucket(c).pop()) is None, "a drained queue answers None"
+        assert rig.call(lambda c: bucket(c).pop()) == [], "a drained queue answers an empty list"
         assert rig.call(lambda c: bucket(c).count()) == 0
     else:  # blob
         payloads = [rng.randbytes(rng.choice([1, 100, 4096, 65536])) for _ in range(BLOBS)]

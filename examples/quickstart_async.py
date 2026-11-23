@@ -7,7 +7,7 @@ async def main() -> None:
         await client.create_database("app", if_not_exists=True)
         users = await client.database("app").create_bucket("users", "hash", if_not_exists=True)
 
-        await users.put("ada", {"name": "Ada", "age": 36})
+        await users.upsert("ada", {"name": "Ada", "age": 36})
         print((await users.get("ada"))["name"])
         async for user in users.find({"age": {"$gte": 30}}):
             print(user["name"])

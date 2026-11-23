@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Time ``get`` against a server and print p50 and p99 (the number the README's quick start is judged by).
+"""Time ``get`` against a server and print p50 and p99 (what the README's quick start is judged by).
 
     python scripts/bench_get.py [--count 20000] [--warmup 1000] [--async]
 

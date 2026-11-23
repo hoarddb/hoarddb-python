@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import hoarddb
@@ -54,6 +55,8 @@ def create_bucket(c: Any, p: dict[str, Any], vec: dict[str, Any]) -> Any:
     if p.get("schemajson") or p["type"] not in STORE_TYPES:
         return RAW
     options = p.get("options") or {}
+    if "placement" in options:
+        return RAW  # the public verb does not offer a placement
     types = None
     if "fields" in options:
         types = hoarddb.FieldTypes(
@@ -94,6 +97,14 @@ def update(c: Any, p: dict[str, Any], vec: dict[str, Any]) -> Any:
 
 def _wc(p: dict[str, Any]) -> Any:
     return p.get("writeconcern") or None
+
+
+def _pop(pop: Callable[..., Any], p: dict[str, Any]) -> Any:
+    """A limit the driver refuses locally is sent raw: the vector wants the server's refusal."""
+    limit = p.get("limit")
+    if limit is not None and not 1 <= limit <= 100:
+        return RAW
+    return pop(limit=limit)
 
 
 def _unknown_wc(p: dict[str, Any]) -> bool:
@@ -152,6 +163,7 @@ ADAPTERS: dict[str, Adapter] = {
         if p.get("key")
         else _bucket(c, p).insert(p["data"], write_concern=_wc(p))
     ),
+    "UPSERT": lambda c, p, v: _bucket(c, p).upsert(p["key"], p["data"], write_concern=_wc(p)),
     "GET": lambda c, p, v: _bucket(c, p).get(p["key"]),
     "CONSISTENT_GET": lambda c, p, v: _bucket(c, p).get(p["key"], consistent=True),
     "EXISTS": lambda c, p, v: _bucket(c, p).exists(p["key"]),
@@ -161,7 +173,7 @@ ADAPTERS: dict[str, Adapter] = {
     "FIFO_PUSH": lambda c, p, v: _bucket(c, p).push(
         p["data"], priority=p.get("priority"), write_concern=_wc(p)
     ),
-    "FIFO_POP": lambda c, p, v: _bucket(c, p).pop(write_concern=_wc(p)),
+    "FIFO_POP": lambda c, p, v: _pop(partial(_bucket(c, p).pop, write_concern=_wc(p)), p),
     "FIFO_PEEK": lambda c, p, v: _bucket(c, p).peek(limit=p.get("limit") or 1),
     "BLOB_WRITE": lambda c, p, v: _bucket(c, p).put_blob(
         p["key"], p["data"], metadata=p.get("metadata") or None, write_concern=_wc(p)
@@ -181,7 +193,7 @@ ADAPTERS: dict[str, Adapter] = {
     "BTREE_FIRST": lambda c, p, v: _bucket(c, p).first(),
     "BTREE_LAST": lambda c, p, v: _bucket(c, p).last(),
     "FIELD_PUSH": lambda c, p, v: _field(c, p).push(p["data"], priority=p.get("priority")),
-    "FIELD_POP": lambda c, p, v: _field(c, p).pop(),
+    "FIELD_POP": lambda c, p, v: _pop(_field(c, p).pop, p),
     "FIELD_PEEK": lambda c, p, v: _field(c, p).peek(limit=p.get("limit") or 1),
     "FIELD_PUT": field_put,
     "FIELD_GET": field_get,
@@ -207,7 +219,7 @@ def send_raw(c: Any, vec: dict[str, Any], doc: dict[str, Any]) -> Any:
     return _wire.send(c, request["opcode"], doc, kind=_kind(request["opcode_name"]))
 
 
-_WRITES = {"PUT", "DELETE", "UPDATE", "BATCH_PUT", "BTREE_INSERT", "BLOB_WRITE"}
+_WRITES = {"PUT", "UPSERT", "DELETE", "UPDATE", "BATCH_PUT", "BTREE_INSERT", "BLOB_WRITE"}
 
 
 def _kind(opcode_name: str) -> Any:
@@ -294,7 +306,7 @@ def _expect_batch(result: Any, j: dict[str, Any]) -> None:
 
 
 def _expect_pop(result: Any, j: dict[str, Any]) -> None:
-    assert result == (j["data"] if j.get("found") else None)
+    assert result == (j["items"] if j.get("found") else [])
 
 
 def _expect_peek(result: Any, j: dict[str, Any]) -> None:
@@ -317,6 +329,7 @@ def _expect_blob_read(result: Any, j: dict[str, Any]) -> None:
 EXPECT.update(
     {
         "PUT": _expect_put,
+        "UPSERT": _expect_put,
         "GET": _same_doc,
         "CONSISTENT_GET": _same_doc,
         "EXISTS": _expect_exists,
@@ -339,7 +352,16 @@ def _with_wc_check(adapter: Adapter) -> Adapter:
     return wrapped
 
 
-for _name in ("PUT", "DELETE", "UPDATE", "BATCH_PUT", "FIFO_PUSH", "FIFO_POP", "BLOB_WRITE"):
+for _name in (
+    "PUT",
+    "UPSERT",
+    "DELETE",
+    "UPDATE",
+    "BATCH_PUT",
+    "FIFO_PUSH",
+    "FIFO_POP",
+    "BLOB_WRITE",
+):
     ADAPTERS[_name] = _with_wc_check(ADAPTERS[_name])
 
 
@@ -391,10 +413,10 @@ def _expect_field_push(result: Any, j: dict[str, Any]) -> None:
 
 
 def _expect_field_pop(result: Any, j: dict[str, Any]) -> None:
-    if j.get("found"):
-        assert result.element == j["element"]
-    else:
-        assert result is None
+    wanted = j.get("items", []) if j.get("found") else []
+    assert [(e.element, e.position) for e in result] == [
+        (item["element"], item.get("position", 0)) for item in wanted
+    ]
 
 
 def _expect_field_peek(result: Any, j: dict[str, Any]) -> None:

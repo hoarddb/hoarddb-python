@@ -151,7 +151,10 @@ def test_a_token_the_server_refuses_falls_back_to_the_password_exactly_once(
     node = own(SHORT_TOKENS)  # a token lives one second, with no clock skew allowed
     if kind == "expired":
         token = mint_token(node)
-        time.sleep(1.3)  # the 1 s token must run out on the server's clock: a wait is the point
+        # The token must run out on the server's clock: a wait is the point. v1.1.0 rounds a
+        # token's expiry UP to whole seconds, so a 1 s token lives between 1 and 2 s, and a
+        # shorter wait presents a token that is still good.
+        time.sleep(2.1)
         want = "TOKEN_EXPIRED"
     else:
         token, want = "not.a.token", "TOKEN_INVALID"

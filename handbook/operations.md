@@ -13,8 +13,9 @@ by the server, and the driver passes that refusal through.
 
 | Driver verb | Opcode sent | fifo | lifo | hash | btree | heap | blob |
 |---|---|---|---|---|---|---|---|
-| put (keyed write, replaces) | `PUT` 10 | yes | yes | yes | yes | yes | yes |
-| insert (keyless write, the server assigns the key) | `PUT` 10 with an empty `key` | yes | yes | yes | yes | yes | yes |
+| put (keyed write. hash, btree: inserts, and a key that already holds a document is refused `DOCUMENT_EXISTS`, code 18, with nothing stored. heap: replaces the entry under that key. fifo, lifo: pushes, so a held key gets a second entry with the same `_id_`. blob: refused `INVALID_ARGUMENT`, a blob is written with put blob) | `PUT` 10 | pushes | pushes | inserts | inserts | replaces | refused |
+| upsert (keyed write, replaces the document or creates it; answered `UPSERT_OK` 17) | `UPSERT` 16 | - | - | yes | yes | - | - |
+| insert (keyless write, the server assigns the key or takes the document's `_id_`; an `_id_` that is taken is refused `DOCUMENT_EXISTS` on a hash or btree) | `PUT` 10 with an empty `key` | yes | yes | yes | yes | yes | refused |
 | insert many | `BATCH_PUT` 20 | yes | yes | yes | yes | yes | - |
 | get | `GET` 11 | - | - | yes | yes | - | yes |
 | exists | `EXISTS` 14 | - | - | yes | yes | - | yes |
@@ -54,8 +55,8 @@ Notes:
   BSON bytes of the document.
 - **`push` on a hash or btree is a keyed put**: the document is stored under its `_id_`, or a minted id
   when it has none, and the answer is the push response (`id`). `pop` and `peek` on a hash or btree are
-  still refused (`pop not supported for bucket type hash`; peek: `found: false` with a message), because
-  there is no order to take from.
+  still refused, with an `ERROR` frame (`INVALID_ARGUMENT`: `pop is not defined for hash buckets ...`),
+  because there is no order to take from.
 - **`get` and `exists` on a blob answer.** `exists` is true for a stored key. `get` answers `found: true`
   with the stored document when the payload is BSON (as a `PUT` to a blob writes it), or else a
   synthesised document `{_id_, blob_id, size, ...metadata}` that carries no payload bytes. `BLOB_READ`
@@ -84,7 +85,7 @@ Notes:
 | put / insert | `database, bucket, key, data, writeconcern` | `id, success, message, seq` † |
 | insert many | `database, bucket, data[], writeconcern` | `ids[], count, success, message` † |
 | push | `database, bucket, data, priority (heap: optional, 0 when omitted), writeconcern` | `id, success, message, seq` † |
-| pop | `database, bucket` | `found, data?, message` † (a pop consumes, so it is a write) |
+| pop | `database, bucket, limit?, writeconcern` | `found, items?, message` † (a pop consumes, so it is a write). `limit` is how many entries to take: absent means 1, at most 100. The answer is a list, `items`, in pop order, for a one-entry pop too; an empty store is `found: false` with `queue is empty` or `heap is empty` |
 | delete | `database, bucket, key, expire_if?{field, date_before, seconds_before}` | `success, message, spared?, skipped?` † |
 | update | `database, bucket, key, set, unset[], inc, push, addtoset, mul, min, max, rename, filter, multi` | `success, doc, message` † |
 | put blob | `database, bucket, key, data (binary), metadata` | `success, key, blobid, size, message` † |
@@ -126,7 +127,10 @@ Notes:
   | `$max` | `max` | document | keeps the larger; an absent field is set |
   | `$rename` | `rename` | document of strings (old name to new) | moves a field; a new name that already exists does nothing |
 - **Insert many** is committed atomically up to the store's bound (`wire.md` section 10); over it the
-  whole batch is refused in-band and nothing is written; halve and resend.
+  whole batch is refused with an `ERROR` frame, `BATCH_TOO_LARGE` (code 17, `write_outcome: not_applied`),
+  and nothing is written; halve and resend. (An earlier server refused it in-band, with the sentence
+  "none of it was written".) A batch that names a key which is taken is refused whole first, with
+  `DOCUMENT_EXISTS`.
 - **Typed fields.** A bucket may declare field types (section 4). A write whose document does not match
   is refused `FIELD_TYPE` and nothing is stored. Today the check runs on put, insert, push and insert
   many; **an update is not yet checked** against the declaration.
@@ -217,7 +221,7 @@ Notes:
   buckets it approaches the frame limit. A driver documents it as an operator call.
 - `list nodes`' `addr` is each node's **cluster** address, not its driver port: a driver never dials it.
 - `bucket info` answers the one bucket's row of `list buckets` without counting any store: it costs the
-  same whether a store field holds ten elements or ten million, so use it (not `bucket stats`) to learn
+  same however many elements a store field holds, so use it (not `bucket stats`) to learn
   which store fields a bucket declares. A missing bucket or database is `NOT_FOUND`, as for `bucket stats`,
   and it needs the same read permission. Its `entries` is the bucket's own document count, not its stores'
   elements (only `bucket stats` counts those).
@@ -266,9 +270,9 @@ Every field verb takes `FieldRequest`:
 | field list | D7 | all | `FieldListResponse` |
 
 - `FieldResponse`: `success, message?, found, element?, element_key?, position?, priority?, entry_id?,
-  len, items?, blob_id?, content?` †. `element` is the element document a pop or get read; `element_key`,
-  `position`, `priority` and `entry_id` say where it was (by engine). A peek answers `items` instead and
-  leaves those five unset: `items[{element?, element_key?, position?, priority?, entry_id?}]` are the next
+  len, items?, blob_id?, content?` †. `element` is the element document a get read; `element_key`,
+  `position`, `priority` and `entry_id` say where it was (by engine). A peek or a pop answers `items`
+  instead and leaves those five unset (a field pop takes `limit` as a bucket pop does): `items[{element?, element_key?, position?, priority?, entry_id?}]` are the next
   elements in pop order, each with where it is (the same entry as a list's).
 - **peek** takes a count: `limit` on the request (bucket `PEEK` and `FIELD_PEEK` alike; absent or 0 means 1,
   a negative `limit` or one above 1000 is `INVALID_ARGUMENT`) and answers a list, `items`, in pop order, for a
@@ -288,6 +292,11 @@ Every field verb takes `FieldRequest`:
   `options.stores`) and answers `{success, message?}`.
 
 ## 6. On a cluster
+
+**On a v1.1.0 server this section does not apply.** It describes the earlier engine's replicated mode,
+which a v1.1.0 server refuses to start in. There, each node answers this driver's opcodes from its own
+local store: a write stays on the node that took it, nothing is forwarded or copied, and a request for a
+replication factor above 1 is refused (`README.md`, "Read this first").
 
 - **A driver talks to any node.** It does not route by the ring, and keeps no per-bucket routing state.
 - **Writes** reaching a node that is not the bucket's owner are forwarded to the owner.

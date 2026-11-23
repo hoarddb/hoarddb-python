@@ -42,6 +42,8 @@ ERROR_CLASSES: dict[int, type[errors.HoardDBError]] = {
     14: errors.ResultTooLargeError,
     15: errors.DuplicateKeyError,
     16: errors.FieldTypeError,
+    17: errors.BatchTooLargeError,
+    18: errors.DocumentExistsError,
 }
 
 

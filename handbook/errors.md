@@ -49,6 +49,8 @@ Tolerance rules, because an older server and a future bug look the same to a dri
 | `0x0E` | `RESULT_TOO_LARGE` | a query result over the node's ceiling, or any response over 32 MiB; carries `max_result_bytes` and `retained_bytes` |
 | `0x0F` | `DUPLICATE_KEY` | a write that would give a unique index a second document with the same key; nothing was stored |
 | `0x10` | `FIELD_TYPE` | a document has a value of the wrong declared type, misses a required field, or has a top-level field name containing `.`, `[` or `]`; nothing was stored. The message names the field, the declared type, the type received and the fix |
+| `0x11` | `BATCH_TOO_LARGE` | a batch put over the largest batch the store commits atomically; `write_outcome: not_applied`, nothing was stored. Split on the code, never on the message: halve the batch and resend. The connection stays open |
+| `0x12` | `DOCUMENT_EXISTS` | a put, an insert or a batch put on a hash or btree bucket that names a key which already holds a document; `write_outcome: not_applied`, nothing was stored (a batch is refused whole). Replace with `UPSERT`, or change fields with `UPDATE`. The connection stays open |
 
 ## 3. Three channels, one error type
 
@@ -63,7 +65,8 @@ A refusal reaches a driver in one of three ways, and a driver folds all three in
    - `delete` of a key that does not exist: `success: false`, message `document not found` (`blob not
      found` on a blob bucket), `write_outcome: not_applied`;
    - `update` of a key that does not exist;
-   - a batch over the atomic bound ("none of it was written").
+   - (an earlier server only) a batch over the atomic bound ("none of it was written"). The current
+     server refuses it with an `ERROR` frame, `BATCH_TOO_LARGE`.
 
    And one in-band **success** a driver must not mistake for a refusal: `create bucket` of a name that
    exists **with the same store type** answers `success: true`, message `bucket "b" already exists (type:
@@ -143,7 +146,8 @@ Reads and writes to existing buckets carry on.
 | `OVERLOADED` | yes, that one dial, with backoff; the pool is fine. This is the all-zero-request-ID refusal of `wire.md` section 8, sent before any request is read. An `OVERLOADED` that carries a request's own ID is not that refusal: a read is resent, a write is **not** (its outcome is unknown unless the answer says otherwise) |
 | `NOT_AUTHENTICATED` | re-authenticate that connection once; then resend the request once if it is a read |
 | `RESULT_TOO_LARGE` | not as sent: page smaller (a cursor halves its page size as often as needed, down to 1 document, then reports), project, or narrow the filter |
-| `NOT_FOUND`, `ALREADY_EXISTS`, `PERMISSION_DENIED`, `INVALID_ARGUMENT`, `DUPLICATE_KEY`, `FIELD_TYPE`, `CONFLICT`, `UNSUPPORTED_VERSION` | **never**: the same request fails the same way |
+| `NOT_FOUND`, `ALREADY_EXISTS`, `PERMISSION_DENIED`, `INVALID_ARGUMENT`, `DUPLICATE_KEY`, `FIELD_TYPE`, `DOCUMENT_EXISTS`, `CONFLICT`, `UNSUPPORTED_VERSION` | **never**: the same request fails the same way |
+| `BATCH_TOO_LARGE` with `write_outcome: not_applied` | not as sent: halve the batch and send the halves in order |
 | `INTERNAL`, `UNKNOWN(n)` | never automatically |
 | the connection failed before a complete response arrived | a read: once, on a fresh connection. A write, and a `pop` (it consumes): **never**; the outcome is unknown and the error says so |
 | an `AUTH_FAIL` | see `auth.md` section 1; never in a loop |
@@ -165,7 +169,7 @@ what to do. Codes for these are the driver's own (outside the wire range), and e
 |---|---|
 | Server key unknown, nothing pinned | the host, the fingerprint it presented, and the three ways to trust it (pin it, trust it once with the CLI, or accept on first sight for local development) |
 | Pinned or recorded key changed | both fingerprints; if the keys were rotated, which line of `known_servers` to delete; if not, that the connection may be intercepted; that the driver will not retry |
-| Credentials refused | the user; that the driver does not retry; where the root password lives (`HOARDDB_ROOT_PASSWORD`, or `<data dir>/root.password`) |
+| Credentials refused | the user; that the driver does not retry; where the root password comes from (`HOARDDB_ROOT_PASSWORD`, or the one the server asked for on its first start) |
 | `RATE_LIMITED` | that it is not a credential failure; to wait; that the driver stopped retrying |
 | Unreachable | the address, the network error, and (for `localhost`) that the server listens on loopback by default and the container image on every interface |
 | An option the server did not advertise | the option, the capability it needs, the server's version; that nothing was sent |

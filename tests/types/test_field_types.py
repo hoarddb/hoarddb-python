@@ -21,7 +21,7 @@ def _sync(client: hoarddb.Client) -> None:
     users = client.database("app").hash("users")
     orders = users.field("ada", "Purchases", doc_type=Order)
     assert_type(orders.push({"item": "tea"}), FieldWriteResult)
-    assert_type(orders.pop(), FieldEntry[Order] | None)
+    assert_type(orders.pop(), list[FieldEntry[Order]])
     assert_type(orders.peek(limit=3), list[FieldEntry[Order]])
     assert_type(orders.put("k", {"item": "tea"}), FieldWriteResult)
     assert_type(orders.get("k"), FieldEntry[Order] | None)
@@ -37,7 +37,7 @@ async def _async(client: hoarddb.aio.Client) -> None:
     users = client.database("app").hash("users")
     orders = users.field("ada", "Purchases", doc_type=Order)
     assert_type(await orders.push({"item": "tea"}), FieldWriteResult)
-    assert_type(await orders.pop(), FieldEntry[Order] | None)
+    assert_type(await orders.pop(), list[FieldEntry[Order]])
     assert_type(await orders.len(), int)
     assert_type(orders.list(), AsyncCursor[FieldEntry[Order]])
 

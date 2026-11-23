@@ -1,4 +1,6 @@
 {
+  "published": false,
+  "note": "No test-server release is published, so there is nothing to download under this tag and scripts/fetch-server.sh fails. The commit below is earlier than the one testdata/driver-vectors/v1.json was recorded from. Build hoarddb-server yourself and set HOARDDB_SERVER_BIN (see testing/README.md).",
   "tag": "test-server-5abce282d5eb",
   "server_commit": "5abce282d5ebda882f49b628d9d8870e1780a656",
   "assets": {

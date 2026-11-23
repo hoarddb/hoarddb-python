@@ -20,6 +20,7 @@ import hoarddb.aio
 COMMON = {"info": True, "stats": True, "drop": True}
 KEYED = {
     "put": True,
+    "upsert": True,
     "insert": True,
     "insert_many": True,
     "get": True,
@@ -172,6 +173,7 @@ def test_the_async_names_match_the_blocking_ones_where_the_spec_gives_two() -> N
 
 WRITES = {
     "put",
+    "upsert",
     "insert",
     "insert_many",
     "delete",

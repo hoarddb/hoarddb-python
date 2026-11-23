@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import ejson
+import replay_api
 from hoarddb._bson import serialize
 from hoarddb._core import frame, opcodes
 from realkit import Servers, authenticate
@@ -28,7 +29,18 @@ from vectors import driver_vectors
 
 pytestmark = pytest.mark.server
 
-SINGLE = [v for v in driver_vectors(kind="exchange") if v["topology"] == "single" and v["replay"]]
+ALL_SINGLE = [
+    v for v in driver_vectors(kind="exchange") if v["topology"] == "single" and v["replay"]
+]
+# The vectors also record opcodes this driver does not send. Several need a value an earlier
+# answer minted (a lease id), which a replay of one request cannot supply, so the leg replays the
+# rest: what the driver has a request for, and what goes on a bare socket.
+NOT_SENT = {
+    "BATCH", "BATCH_UPSERT", "QUEUE_CLAIM", "QUEUE_ACK", "QUEUE_RELEASE", "QUEUE_EXTEND",
+    "DEAD_LIST", "DEAD_REQUEUE", "DEAD_DISCARD", "ALTER_BUCKET", "USER_CREATE", "USER_ALTER",
+    "USER_DROP", "USER_LIST", "USER_GET", "USER_GRANT", "USER_REVOKE",
+}  # fmt: skip
+SINGLE = [v for v in ALL_SINGLE if v["request"]["opcode_name"] not in NOT_SENT]
 
 
 def group_env(vec: dict[str, Any]) -> dict[str, str]:
@@ -105,6 +117,7 @@ def test_the_vector_replays_against_the_real_server(
         raise
 
 
-def test_the_replay_set_is_the_172_single_node_vectors() -> None:
-    assert len(SINGLE) == 172
+def test_the_replay_set_is_the_204_single_node_vectors_the_driver_sends() -> None:
+    assert (len(ALL_SINGLE), len(SINGLE)) == (267, 204)
+    assert NOT_SENT.isdisjoint(replay_api.ADAPTERS)
     assert sum(1 for v in SINGLE if needs_raw_socket(v)) >= 9

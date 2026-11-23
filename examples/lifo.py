@@ -10,10 +10,8 @@ with hoarddb.connect() as client:
     for step in ("type a", "type b", "delete line"):
         undo.push({"step": step})
 
-    for _ in range(3):
-        entry = undo.pop()
-        assert entry is not None
-        print(entry["step"])  # delete line, type b, type a
-    print(undo.pop())  # None
+    while popped := undo.pop():  # a list of one; [] once the stack is empty
+        print(popped[0]["step"])  # delete line, type b, type a
+    print(undo.pop())  # []
 
     client.drop_database("example_lifo")

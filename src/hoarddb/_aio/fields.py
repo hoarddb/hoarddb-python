@@ -95,13 +95,19 @@ class FieldStore(Generic[E]):
 
     @writes
     async def pop(
-        self, *, write_concern: WriteConcern | None = None, timeout: float | None = None
-    ) -> FieldEntry[E] | None:
-        """Take the next element of a fifo, lifo or heap field, or None when it is empty. A pop
-        consumes, so it is a write and is never retried."""
+        self,
+        *,
+        limit: int | None = None,
+        write_concern: WriteConcern | None = None,
+        timeout: float | None = None,
+    ) -> builtins.list[FieldEntry[E]]:
+        """Take the next elements of a fifo, lifo or heap field and return them in pop order.
+        One by default; ``limit`` asks for up to 100 in one request. The answer is always a
+        list, and an empty field is ``[]``. A pop removes what it returns, so it is a write and
+        is never retried."""
         wc = self._ctx.wc(write_concern)
-        op = fieldops.pop(self._ref, wc=wc, timeout=timeout)
-        return cast("FieldEntry[E] | None", await self._ctx.run(op))
+        op = fieldops.pop(self._ref, limit=limit, wc=wc, timeout=timeout)
+        return cast("builtins.list[FieldEntry[E]]", await self._ctx.run(op))
 
     async def peek(
         self, *, limit: int = 1, timeout: float | None = None

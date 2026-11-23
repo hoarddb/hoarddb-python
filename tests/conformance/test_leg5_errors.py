@@ -59,9 +59,11 @@ CASES: list[Case] = [
     (
         "bucket of another type: read a queue by key",
         lambda c: c.database(DB).bucket("queue").get("k"),
-        None,  # an in-band refusal: a success frame whose payload says no
+        # v1.1.0 answers a verb the bucket's type does not take with an ERROR frame,
+        # INVALID_ARGUMENT (wire code 4). An earlier server refused in band, in a success frame.
+        4,
         errors.InvalidArgumentError,
-        ["not supported for bucket type fifo"],
+        ["get is not supported for bucket type fifo", "A fifo bucket takes:"],
     ),
     (
         "bucket of another type: range on a hash bucket",
@@ -170,7 +172,8 @@ def test_the_error_classes_here_are_the_ones_the_replay_maps() -> None:
 
 
 def test_an_empty_blob_is_refused_by_the_server_and_passed_through(servers: Servers) -> None:
-    """Measured against the pinned server: a zero-byte blob is ERROR code 5 (INTERNAL), not 4. The
+    """A zero-byte blob is refused with ERROR code 4 (INVALID_ARGUMENT) on v1.1.0, on purpose: it
+    is the caller's argument that is wrong. An earlier server answered code 5 (INTERNAL). The
     driver reports the code the server sends and does not guess."""
     node = servers.node(TUNED)
     rig = servers.rig("sync", node)
@@ -182,5 +185,6 @@ def test_an_empty_blob_is_refused_by_the_server_and_passed_through(servers: Serv
         )
     finally:
         rig.drop_every_database()
-    assert raised.wire_code == 5 and isinstance(raised, errors.InternalError)
+    assert raised.wire_code == 4 and isinstance(raised, errors.InvalidArgumentError)
+    assert raised.write_outcome == "not_applied"
     assert raised.message == wire_message and "no data to store" in wire_message

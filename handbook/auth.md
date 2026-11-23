@@ -111,8 +111,9 @@ never that every user is an administrator.
 
 The root user exists from the first start: `admin` by default (`HOARDDB_ROOT_USER`), with the password
 from `HOARDDB_ROOT_PASSWORD` (or the file named by `HOARDDB_ROOT_PASSWORD_FILE`); when neither is set on
-a first start the server generates one, prints it once with two copy-pasteable `export` lines, and
-saves it to `<data dir>/root.password` (mode `0600`).
+a first start from a terminal the server asks for one, and a first start with no terminal refuses,
+writes nothing and says to set one. Only the password's hash is stored; the password is never written to
+disk, so a driver's tests supply `HOARDDB_ROOT_PASSWORD` rather than read it back.
 
 When a user is dropped or disabled, the server closes that user's live connections (`wire.md`
 section 8).

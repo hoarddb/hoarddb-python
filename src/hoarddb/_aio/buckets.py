@@ -113,12 +113,35 @@ class _Put(_Handle[T]):
         write_concern: WriteConcern | None = None,
         timeout: float | None = None,
     ) -> WriteResult:
-        """Store ``doc`` under ``key``, replacing what was there. The result carries the key
-        (``id``), the sequence number and, on a cluster, how many copies were confirmed. On a
-        queue or heap, ``put`` pushes; on a blob it stores the document as the payload (use
-        put_blob() for bytes)."""
+        """Store ``doc`` under ``key`` as a new document. On a hash or btree bucket a put
+        inserts and never replaces: a key that already holds a document is refused with
+        DocumentExistsError and nothing is written, so use upsert() to replace it or update() to
+        change some of its fields. The result carries the key (``id``), the sequence number and,
+        on a cluster, how many copies were confirmed. Through the generic Bucket the other store
+        types answer in their own way, with no error for a held key: a heap replaces the entry
+        under that key, and a fifo or lifo pushes a second entry with the same ``_id_``. A blob
+        bucket refuses put with InvalidArgumentError (use put_blob())."""
         wc = self._ctx.wc(write_concern)
         return await self._ctx.run(keyedops.put(self._ref, key, doc, wc=wc, timeout=timeout))
+
+    @writes
+    async def upsert(
+        self,
+        key: str,
+        doc: T,
+        *,
+        write_concern: WriteConcern | None = None,
+        timeout: float | None = None,
+    ) -> WriteResult:
+        """Store ``doc`` under ``key``, replacing the document that is there and creating it
+        when there is none. The replaced document's own fields are replaced and its store
+        fields are kept. Use put() to refuse a key that is taken instead. A bucket with no keys
+        to replace (a fifo, lifo or heap) refuses it with InvalidArgumentError, and the server's
+        sentence names the verb to use. The driver never sends an upsert twice: after a lost
+        answer the outcome is unknown, and sending it again would overwrite any write that
+        landed in between, so that decision is yours."""
+        wc = self._ctx.wc(write_concern)
+        return await self._ctx.run(keyedops.upsert(self._ref, key, doc, wc=wc, timeout=timeout))
 
 
 class _Insert(_Handle[T]):
@@ -147,11 +170,12 @@ class _Batch(_Handle[T]):
     ) -> BatchResult:
         """Store many documents in one request, on the bulk lane.
 
-        A batch the server refuses whole (it says "none of it was written") is halved and the
-        halves are sent in order. That is the only refusal the driver halves on: any other may
+        A batch the server refuses whole (BatchTooLargeError with nothing written) is halved and
+        the halves are sent in order. That is the only refusal the driver halves on: any other may
         follow a partial write. If a later half fails, the error carries ``written_count`` and
-        ``written_ids``: the first part IS stored, so resend only the remainder,
-        ``docs[written_count:]``, never the whole list. A batch of one that is refused is
+        ``written_ids`` and its ``write_outcome`` is ``"unknown"``, never ``"not_applied"``: the
+        first part IS stored, so resend only the remainder, ``docs[written_count:]``, never the
+        whole list. A batch of one that is refused is
         raised as it is."""
         wc = self._ctx.wc(write_concern)
         return await self._ctx.run(keyedops.insert_many(self._ref, docs, wc=wc, timeout=timeout))
@@ -237,14 +261,20 @@ class _Queue(_Handle[T]):
 
     @writes
     async def pop(
-        self, *, write_concern: WriteConcern | None = None, timeout: float | None = None
-    ) -> T | None:
-        """Take the next document, or None when the queue is empty. A pop consumes, so it is a
-        write: it carries a write concern, and it is never retried."""
+        self,
+        *,
+        limit: int | None = None,
+        write_concern: WriteConcern | None = None,
+        timeout: float | None = None,
+    ) -> list[T]:
+        """Take the next documents and return them in pop order: the oldest of a fifo, the
+        newest of a lifo, the highest priority of a heap. One by default; ``limit`` asks for up
+        to 100 in one request, and fewer than asked for means that was all there was. The answer
+        is always a list, and an empty store is ``[]``, not an error. A pop removes what it
+        returns, so it is a write: it carries a write concern, and it is never retried."""
         wc = self._ctx.wc(write_concern)
-        return cast(
-            "T | None", await self._ctx.run(queueops.pop(self._ref, wc=wc, timeout=timeout))
-        )
+        op = queueops.pop(self._ref, limit=limit, wc=wc, timeout=timeout)
+        return cast("list[T]", await self._ctx.run(op))
 
     async def peek(self, *, limit: int = 1, timeout: float | None = None) -> list[T]:
         """The next ``limit`` documents (1 to 1000) in pop order, removing none; [] when empty."""

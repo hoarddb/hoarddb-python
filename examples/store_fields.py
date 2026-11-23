@@ -21,9 +21,9 @@ with hoarddb.connect() as client:
     grace.push({"item": "compiler"})
 
     print(ada.len(), grace.len())  # 2 1: each user has a queue of their own
-    first = ada.pop()
-    assert first is not None and first.element is not None
-    print(first.element["item"])  # tea
+    for entry in ada.pop():  # a list of entries: one unless you pass limit=
+        assert entry.element is not None
+        print(entry.element["item"])  # tea
     rest = [e.element["item"] for e in ada.peek(limit=5) if e.element is not None]
     print(rest)  # ['books']
 

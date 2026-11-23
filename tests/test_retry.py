@@ -226,18 +226,21 @@ def test_whatever_the_driver_retries_the_error_also_calls_retryable(
 # --- which ERROR frames leave a connection reusable (spec 6.2 item 5) ---------------------------
 
 
-@pytest.mark.parametrize(("code", "keeps"), [(1, True), (2, True), (14, True), (16, True)])
-def test_the_survivor_list_is_the_go_drivers_four(code: int, keeps: bool) -> None:
-    assert retry.keeps_connection(code, zero_id=False) is keeps
+@pytest.mark.parametrize("code", [1, 2, 14, 16, 17, 18])
+def test_the_refusals_the_server_keeps_the_connection_open_after(code: int) -> None:
+    """The Go driver's list (not found, already exists, result too large, field type, batch too
+    large) and document exists: a refused put is an everyday answer, and dialling again after each
+    one costs a TLS handshake and a login. tests/conformance pins 17 and 18 against a server."""
+    assert retry.keeps_connection(code, zero_id=False) is True
 
 
-@pytest.mark.parametrize("code", [0, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 99])
+@pytest.mark.parametrize("code", [0, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 19, 99])
 def test_every_other_error_discards_the_connection(code: int) -> None:
     assert retry.keeps_connection(code, zero_id=False) is False
 
 
 def test_a_zero_id_refusal_always_discards() -> None:
-    for code in (1, 2, 14, 16):
+    for code in (1, 2, 14, 16, 17, 18):
         assert retry.keeps_connection(code, zero_id=True) is False
 
 

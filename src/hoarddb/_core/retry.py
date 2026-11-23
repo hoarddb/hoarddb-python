@@ -26,8 +26,9 @@ _NOT_AUTHENTICATED: Final = 12
 _OVERLOADED: Final = 13
 
 # The codes after which the server leaves the connection open (spec 6.2 item 5, taken as the Go
-# driver takes it): not found, already exists, result too large, field type.
-_SURVIVORS: Final = frozenset({1, 2, 14, 16})
+# driver takes it): not found, already exists, result too large, field type, batch too large; and
+# document exists, the answer to every refused put, which the server also leaves it open after.
+_SURVIVORS: Final = frozenset({1, 2, 14, 16, 17, 18})
 
 
 def backoff_cap(failures: int) -> float:

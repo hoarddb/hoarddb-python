@@ -1,5 +1,9 @@
 # The Go driver's API
 
+> This chapter describes the root package `hoarddb` of the Go module, which sends the earlier engine's
+> opcodes, as this driver does. It does not describe the Go ring client (package `ring`). See
+> `README.md`, "Read this first".
+
 Module `github.com/hoarddb/hoarddb-go`, package `hoarddb`, Go 1.23 or later (a floor, not a pin; the
 cursor uses range-over-func). Binds the Go driver only. Every name here comes from a hoardDB concept
 (the opcode, the store type, the bucket) or from a Go standard-library convention, never from another
@@ -7,7 +11,7 @@ database's driver.
 
 The connection layer already exists: `Connect`, the options, trust, AUTH with tokens, the pool, `Ping`,
 `ServerInfo`, `PoolStats` and the `Error` type, with the unstable wire package `hoarddbwire`. This
-chapter is the whole v1 surface.
+chapter is the whole surface of that package.
 
 ## 1. Shape
 
@@ -24,8 +28,8 @@ key, element), then the document, then options. Options are small function types
 call that needs six or more inputs takes a struct.
 
 **Handles cost nothing.** `client.Database("app").Bucket("users")` allocates two small structs, does
-no I/O, holds no connection, goroutine, timer, cache entry or metric, and is registered nowhere. A
-program may hold a million. The first error appears on the first operation, where it carries the fix.
+no I/O, holds no connection, goroutine, timer, cache entry or metric, and is registered nowhere.
+The first error appears on the first operation, where it carries the fix.
 The driver never looks a bucket's store type up: a verb the type does not answer is the server's
 refusal, passed through.
 
@@ -323,14 +327,14 @@ deadline; nothing else is retried, and never `Put`, `Insert`, `InsertMany`, `Pus
 ## 8. Concurrency and the pool
 
 A `*Client` is safe for concurrent use. Two lanes per host (point 4, bulk 2), dialled lazily; a call
-that finds its lane busy waits for its `ctx`. One request in flight per connection in v1; each
+that finds its lane busy waits for its `ctx`. One request in flight per connection; each
 connection is a request-ID demultiplexer with one reader goroutine, so the pool notices a closed
 connection before it is used. Idle connections are closed after 120 s, or kept alive with `PING` at
 60 s. Cancelling a call closes the connection it was using (the server cannot be told to stop), and the
 pool redials. Dial backoff is 100 ms doubling to 5 s with full jitter, per host; `OVERLOADED` backs off
 that dial only; a trust failure is not retried. `Close` waits for every goroutine the client started.
 
-## 9. Not in v1
+## 9. Not in this package
 
 `GET_FAST` as an API (the driver may use it inside `Get`); caller-visible pipelining (waits for the
 server's `query_pipelining`); user administration, backup and restore, and cluster operations (the

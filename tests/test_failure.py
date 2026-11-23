@@ -11,7 +11,7 @@ import pytest
 import minibson
 import vectors
 from hoarddb import errors
-from hoarddb._core import diagnostics, frame
+from hoarddb._core import diagnostics, frame, messages
 from hoarddb._core.failure import (
     ZERO_ID,
     Context,
@@ -42,7 +42,11 @@ CLASS_BY_NAME: dict[str, type[errors.HoardDBError]] = {
     "RESULT_TOO_LARGE": errors.ResultTooLargeError,
     "DUPLICATE_KEY": errors.DuplicateKeyError,
     "FIELD_TYPE": errors.FieldTypeError,
+    "BATCH_TOO_LARGE": errors.BatchTooLargeError,
+    "DOCUMENT_EXISTS": errors.DocumentExistsError,
 }
+
+LAST_CODE_WITH_A_CLASS = 18  # DOCUMENT_EXISTS; the ring's own codes start at 19
 
 
 def _decode(frame_hex: str) -> tuple[frame.Frame, dict[str, Any]]:
@@ -98,6 +102,27 @@ def test_an_unknown_code_keeps_its_number() -> None:
     assert err.retryable is False
 
 
+def test_document_exists_is_a_typed_refusal() -> None:
+    """Code 18: an insert of a key that already holds a document. The server stored nothing and
+    its sentence quotes shell syntax, so the hint names the calls this driver has."""
+    sentence = 'Document "ada" already exists in bucket "users" (database "app").'
+    payload = {"code": 18, "message": sentence, "write_outcome": "not_applied"}
+    err = error_from_payload(payload, b"\x01" * 16, Context("put", "app/users/ada", "WRITE"))
+    assert type(err) is errors.DocumentExistsError
+    assert (err.code, err.wire_code, err.message) == ("DOCUMENT_EXISTS", 18, sentence)
+    assert err.write_outcome == "not_applied" and err.retryable is False
+    assert err.hint is not None and "upsert(key, doc)" in err.hint and "update(key" in err.hint
+    assert "Upgrade the driver" not in str(err)
+
+
+def test_batch_too_large_is_a_typed_refusal() -> None:
+    payload = {"code": 17, "message": "none of it was written", "write_outcome": "not_applied"}
+    err = error_from_payload(payload, b"\x01" * 16, Context("insert_many", "app/users", "WRITE"))
+    assert type(err) is errors.BatchTooLargeError
+    assert (err.code, err.wire_code, err.write_outcome) == ("BATCH_TOO_LARGE", 17, "not_applied")
+    assert err.retryable is False
+
+
 def test_an_empty_auth_fail_payload_is_credentials() -> None:
     err = auth_failure_from_payload({}, b"\x01" * 16, username="admin", host_port="h:7433")
     assert err.reason == "CREDENTIALS"
@@ -125,7 +150,14 @@ def test_exchange_vector_errors(vec: vectors.Vector) -> None:
         return
     want = vec["error"]
     err = error_from_payload(payload, rid, Context(vec["request"]["opcode_name"], None, "WRITE"))
-    assert type(err) is CLASS_BY_NAME[want["name"]]
+    if want["code"] > LAST_CODE_WITH_A_CLASS:
+        # A ring code. This driver sends no ring opcode and has no class for one: it keeps the
+        # number and the server's sentence, and never reads the code as one it knows.
+        assert type(err) is errors.InternalError
+        assert err.code == f"UNKNOWN({want['code']})"
+    else:
+        assert type(err) is CLASS_BY_NAME[want["name"]]
+        assert err.code == want["name"]
     assert err.wire_code == want["code"]
     assert err.message == payload["message"]
     assert all(s in err.message for s in want["message_contains"])
@@ -368,8 +400,8 @@ def test_every_in_band_exchange_vector_classifies_as_pinned() -> None:
     checked = 0
     for v in vectors.driver_vectors(kind="exchange"):
         resp = v["response"]
-        if resp["opcode_name"] == "ERROR":
-            continue
+        if resp["opcode_name"] == "ERROR" or v["request"]["opcode"] not in messages.REQUESTS:
+            continue  # a refusal frame, or an opcode this driver does not send
         if not resp.get("payload_hex") or resp["opcode_name"] == "GET_FAST_RESPONSE":
             continue  # empty, or GET_FAST's status byte + BSON, which is not a plain document
         payload = minibson.loads(bytes.fromhex(resp["payload_hex"]))

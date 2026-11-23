@@ -13,6 +13,11 @@ with hoarddb.connect() as client:
 
     users.put("ada", {"name": "Ada", "age": 36})
     users.put("grace", {"name": "Grace", "age": 85})
+    try:
+        users.put("ada", {"name": "Ada Lovelace"})  # put inserts: the key is taken
+    except hoarddb.DocumentExistsError as refused:
+        print(refused.code, refused.write_outcome)  # DOCUMENT_EXISTS not_applied
+    users.upsert("ada", {"name": "Ada", "age": 36})  # upsert replaces, or creates
     ada = users.get("ada")
     assert ada is not None
     print(ada["name"])  # Ada

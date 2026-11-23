@@ -17,8 +17,41 @@ CLUSTER_PROPOSE: Final = 0x96
 CLUSTER_ADD: Final = 0x97
 MIGRATE: Final = 0x98
 CLUSTER_REMOVE: Final = 0x99
+CLUSTER_PROBE: Final = 0x9A
+CLUSTER_PROBE_REPLY: Final = 0x9B
 VERSIONED_GET: Final = 0x9D
 MEMBERSHIP_CHANGE: Final = 0x9E
+
+# Opcodes of the server that this driver does not send: the grouped batch, the leased queue
+# verbs, the dead list, ALTER_BUCKET, the user verbs and the ring family. The vectors name them,
+# so the table does too; no request class exists for any of them.
+BATCH: Final = 0x22
+BATCH_OK: Final = 0x23
+BATCH_UPSERT: Final = 0x24
+BATCH_UPSERT_OK: Final = 0x25
+QUEUE_CLAIM: Final = 0x34
+QUEUE_ACK: Final = 0x35
+QUEUE_RELEASE: Final = 0x36
+QUEUE_EXTEND: Final = 0x37
+DEAD_LIST: Final = 0x38
+DEAD_REQUEUE: Final = 0x39
+DEAD_DISCARD: Final = 0x3A
+ALTER_BUCKET: Final = 0x8E
+USER_CREATE: Final = 0xB5
+USER_ALTER: Final = 0xB6
+USER_DROP: Final = 0xB7
+USER_LIST: Final = 0xB8
+USER_GET: Final = 0xB9
+USER_GRANT: Final = 0xBA
+USER_REVOKE: Final = 0xBB
+RING_LIST: Final = 0xDA
+RING_COUNT: Final = 0xDB
+RING_KEYED: Final = 0xDC
+RING_ADMIN: Final = 0xDD
+RING_TOPOLOGY: Final = 0xDE
+RING_REPLY: Final = 0xDF
+RING_BATCH: Final = 0xE0
+RING_GET_MANY: Final = 0xE1
 
 AUTH: Final = 0x01
 AUTH_OK: Final = 0x02
@@ -29,6 +62,8 @@ GET_RESPONSE: Final = 0x12
 DELETE: Final = 0x13
 EXISTS: Final = 0x14
 EXISTS_RESPONSE: Final = 0x15
+UPSERT: Final = 0x16
+UPSERT_OK: Final = 0x17
 BATCH_PUT: Final = 0x20
 BATCH_PUT_OK: Final = 0x21
 FIFO_PUSH: Final = 0x30

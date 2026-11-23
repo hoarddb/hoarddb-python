@@ -84,18 +84,23 @@ def test_push_sends_the_field_the_document_and_a_priority_only_when_given(
         assert second["field"] == "Books"
 
 
-def test_pop_returns_an_entry_or_none(mode: str, identity: Any) -> None:
+def test_pop_returns_the_entries_as_a_list(mode: str, identity: Any) -> None:
+    item = {
+        "entry_id": "e1",
+        "position": 3,
+        "priority": 2,
+        "element": {"Item": "tea", "_id_": "e1"},
+    }
     answers = [
-        reply(opcodes.FIELD_POP, {"success": True, "found": True, "entry_id": "e1", "position": 3,
-                                  "priority": 2, "element": {"Item": "tea", "_id_": "e1"}}),
+        reply(opcodes.FIELD_POP, {"success": True, "found": True, "len": 0, "items": [item]}),
         reply(opcodes.FIELD_POP, {"success": True, "found": False, "len": 0}),
-    ]  # fmt: skip
+    ]
     script = Script({opcodes.FIELD_POP: answers})
     with public(mode, identity, script) as (pc, _, _):
-        popped = pc.call(lambda c: field(pc).pop())
+        (popped,) = pc.call(lambda c: field(pc).pop())
         assert popped.element == {"Item": "tea", "_id_": "e1"}
         assert (popped.entry_id, popped.position, popped.priority) == ("e1", 3, 2)
-        assert pc.call(lambda c: field(pc).pop()) is None
+        assert pc.call(lambda c: field(pc).pop()) == []
 
 
 def test_pop_is_a_write_and_is_never_retried(mode: str, identity: Any) -> None:

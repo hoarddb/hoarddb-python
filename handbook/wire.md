@@ -130,7 +130,7 @@ error answer is `ERROR` (`0xA2`) in place of the success opcode. This table is t
 The field names of every payload are in `operations.md`.
 
 **Outside the application API** (a driver may expose them in a low-level layer; the vectors do not
-cover them in v1): `CLUSTER_ADD` 97, `MIGRATE` 98, `CLUSTER_REMOVE` 99 (operator triggers);
+cover them): `CLUSTER_ADD` 97, `MIGRATE` 98, `CLUSTER_REMOVE` 99 (operator triggers);
 `DUMP_START`/`DUMP_CHUNK`/`DUMP_DONE` A5–A7 and `RESTORE_START`/`RESTORE_CHUNK`/`RESTORE_DONE` A8–AA
 (backup, root only today); `USER_CREATE` … `USER_REVOKE` B5–BB (user administration: creating a user
 sends a client-derived Argon2id credential, never a plaintext password, so a driver that offers it
@@ -153,7 +153,7 @@ suggest (`PUT` on a queue pushes, `FIFO_PUSH` on a hash is a keyed put), and tha
 
 ## 5. `GET_FAST`: the compact read
 
-An optimisation of `GET` that skips BSON on the request. **Not part of the v1 public API**; a driver may
+An optimisation of `GET` that skips BSON on the request. **Not part of the public API**; a driver may
 use it internally when the server advertises `get_fast`.
 
 - Request payload (not BSON): `1-byte database length, database, 1-byte bucket length, bucket, 2-byte
@@ -179,7 +179,7 @@ read the fields when they are present (`errors.md`).
   admitted frame **concurrently**. With more than one request in flight, **neither response order nor
   execution order is guaranteed**. A client that writes too far ahead is not refused; the server stops
   reading and TCP backpressure slows it.
-- **v1 drivers are lockstep: one request in flight per connection**, and several connections in a pool.
+- **These drivers are lockstep: one request in flight per connection**, and several connections in a pool.
   It is provably correct and needs no ordering contract. A driver's connection is nonetheless built as a
   request-ID demultiplexer (a writer lock, one reader, a table of waiters by request ID) so that raising
   the in-flight limit later is a constant, not a rewrite.
@@ -241,7 +241,7 @@ limit** itself and passes the server's refusal through for the rest:
 | Document (its own encoded bytes) | 24 MiB | 4 KiB – 30 MiB | `INVALID_ARGUMENT`, message begins `Document "<key>" is …`. Applies to a put, insert, batch member, push, store-field element and the result of an update |
 | Blob | 16 MiB | up to 32 MiB − 64 KiB | `INVALID_ARGUMENT`, message begins `Blob "<key>" is …; this server's limit is …` |
 | Replication fit | payload + key + bucket name + 4 KiB ≤ 32 MiB | fixed | `INVALID_ARGUMENT`, "… too much to replicate … Shorten the key or the metadata." A ~31 MiB document with a long key meets it |
-| One batch, committed atomically | depends on the node's memory table size: about 5 MB at 32 MiB, about 20 MB at the 128 MiB a larger host chooses (`health` reports it as `memtable.batch_bytes`) | per node | the whole batch is refused in-band ("none of it was written"); **halve and resend**: nothing was written. A later server splits large batches itself |
+| One batch, committed atomically | depends on the node's memory table size: about 5 MB at 32 MiB, about 20 MB at the 128 MiB a larger host chooses (`health` reports it as `memtable.batch_bytes`) | per node | the whole batch is refused with an `ERROR` frame, `BATCH_TOO_LARGE` (code 17, `write_outcome: not_applied`); **halve and resend**: nothing was written. An earlier server refused it in-band ("none of it was written") |
 | Query result a node will hold | 16 MiB | 1 – 24 MiB | `RESULT_TOO_LARGE` with `max_result_bytes` and `retained_bytes` (a lower bound); **the connection and its other requests are unaffected**; page smaller, project, or narrow the filter |
 | Any response frame | 32 MiB | fixed | replaced by `RESULT_TOO_LARGE` echoing the request ID; treat as above |
 | Database, bucket, typed-field name | 255 bytes of UTF-8 | fixed | refused in-band at create (`success:false`, message gives the length and the limit) |

@@ -274,6 +274,56 @@ def test_a_batch_the_server_can_hold_is_stored_in_one_request_and_a_bigger_one_i
         rig.drop_every_database()
 
 
+def test_a_batch_over_the_stores_atomic_bound_is_halved_and_every_document_is_stored_once(
+    mode: str, servers: Servers
+) -> None:
+    """Many mid-sized documents: the server refuses the batch whole with BATCH_TOO_LARGE (a value
+    of 1 MiB or more hardly counts toward the bound, which is why the test above never meets it).
+    The driver halves on the code and sends the halves in order."""
+    rig = servers.rig(mode, servers.node())
+    docs = [{"_id_": f"k{i:03d}", "pad": "x" * 100_000} for i in range(250)]
+    try:
+        rig.call(lambda c: c.create_database("halved"))
+        rig.call(lambda c: c.database("halved").create_bucket("rows", "hash"))
+        rig.tap.clear()
+        result = rig.call(lambda c: c.database("halved").bucket("rows").insert_many(docs))
+        sent = [f for f in rig.tap.requests() if f.opcode == opcodes.BATCH_PUT]
+        refused = [f for f in sent if (a := rig.tap.answer_to(f)) and a.opcode == opcodes.ERROR]
+        assert refused, "the batch was meant to be over the bound: make it larger"
+        assert len(sent) > len(refused)
+        assert result.count == len(docs) and result.ids == [d["_id_"] for d in docs]
+        assert rig.call(lambda c: c.database("halved").bucket("rows").count()) == len(docs)
+        RESULT_LINES.append(
+            f"leg 6 batch {rig.mode:5} {len(docs)} documents over the atomic bound: "
+            f"{len(sent)} BATCH_PUT requests, {len(refused)} refused whole, all stored once"
+        )
+    finally:
+        rig.drop_every_database()
+
+
+def test_an_over_bound_batch_that_names_a_taken_key_is_refused_whole_before_any_halving(
+    mode: str, servers: Servers
+) -> None:
+    """The server checks a batch's keys before its size, so a taken key refuses the whole batch
+    and nothing is stored: the outcome is the server's ``not_applied``, with no written count. (A
+    later half failing after an earlier one was stored is covered against a scripted server in
+    tests/test_verbs.py; a real server gives no steady way to cause it.)"""
+    rig = servers.rig(mode, servers.node())
+    docs = [{"_id_": f"k{i:03d}", "pad": "x" * 100_000} for i in range(250)]
+    try:
+        rig.call(lambda c: c.create_database("partly"))
+        rig.call(lambda c: c.database("partly").create_bucket("rows", "hash"))
+        rig.call(lambda c: c.database("partly").bucket("rows").put("k200", {"taken": True}))
+        with pytest.raises(errors.DocumentExistsError) as caught:
+            rig.call(lambda c: c.database("partly").bucket("rows").insert_many(docs))
+        err = caught.value
+        assert (err.written_count, err.written_ids) == (None, None)
+        assert err.write_outcome == "not_applied"
+        assert rig.call(lambda c: c.database("partly").bucket("rows").count()) == 1
+    finally:
+        rig.drop_every_database()
+
+
 # -- a document at the operator's maximum ---------------------------------------------------------
 
 

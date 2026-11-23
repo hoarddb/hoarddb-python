@@ -202,6 +202,113 @@ def test_a_refusal_that_is_not_none_of_it_was_written_is_never_halved(
         assert len(script.of(opcodes.BATCH_PUT)) == 1  # a duplicate write if it had been halved
 
 
+# The sentence a hoardDB v1.1.0 server sent with ERROR code 17 for a 250-document batch.
+OVER_BOUND = (
+    "This batch exceeds the largest batch the store commits atomically, so none of it was "
+    "written. This batch is 250 documents, 23.9 MiB encoded."
+)
+
+
+def too_large(outcome: str | None = "not_applied") -> Any:
+    extra = {} if outcome is None else {"write_outcome": outcome}
+    return [fakehoard.error(17, OVER_BOUND, **extra)]
+
+
+def test_a_batch_refused_with_batch_too_large_is_halved_on_the_code(
+    mode: str, identity: Any
+) -> None:
+    """The released server refuses an over-bound batch with an ERROR frame, code 17, and
+    ``write_outcome: not_applied``: nothing was written, so the halves are safe to send."""
+
+    def answer(doc: dict[str, Any]) -> Any:
+        return too_large() if len(doc["data"]) > 2 else batch_ok([d["n"] for d in doc["data"]])
+
+    script = Script({opcodes.BATCH_PUT: answer})
+    docs = [{"n": str(i)} for i in range(5)]
+    with public(mode, identity, script) as (pc, _, _):
+        result = pc.call(lambda c: bucket(pc, "hash").insert_many(docs))
+        assert result.ids == ["0", "1", "2", "3", "4"] and result.count == 5
+        sizes = [len(d["data"]) for d in script.of(opcodes.BATCH_PUT)]
+        assert sizes == [5, 2, 3, 1, 2]
+
+
+EXISTS = 'Document "2" already exists in bucket "users" (database "app"). Nothing was stored.'
+LATER_FAILURES: dict[str, tuple[Any, type[errors.HoardDBError], bool]] = {
+    # what answers the second half, the class raised, and whether that half's own fate is known
+    "document exists": (
+        [fakehoard.error(18, EXISTS, write_outcome="not_applied")],
+        errors.DocumentExistsError,
+        True,
+    ),
+    "lost connection": ([fakehoard.Close()], errors.ConnectionFailedError, False),
+    "internal": ([fakehoard.error(5, "store failure")], errors.InternalError, False),
+}
+
+
+@pytest.mark.parametrize("case", sorted(LATER_FAILURES))
+def test_a_halved_batch_that_fails_later_is_never_reported_as_not_applied(
+    mode: str, identity: Any, case: str
+) -> None:
+    """The first half IS stored. An error that still said ``not_applied`` (the refused half's own
+    outcome) would invite resending the whole list, and on a queue that stores the first half
+    twice. The whole call's outcome is unknown, and the hint says where to resume."""
+    failing, cls, part_known = LATER_FAILURES[case]
+
+    def answer(doc: dict[str, Any]) -> Any:
+        ids = [d["n"] for d in doc["data"]]
+        if len(ids) > 4:
+            return too_large()
+        return failing if ids[0] == "4" else batch_ok(ids)
+
+    docs = [{"n": str(i)} for i in range(8)]
+    with public(mode, identity, Script({opcodes.BATCH_PUT: answer})) as (pc, _, _):
+        with pytest.raises(cls) as caught:
+            pc.call(lambda c: bucket(pc, "fifo", "q").insert_many(docs))
+        err = caught.value
+        assert err.written_count == 4 and err.written_ids == ["0", "1", "2", "3"]
+        assert err.write_outcome == "unknown" and err.retryable is False
+        hint = err.hint or ""
+        assert hint.startswith("4 of 8 documents were written before this failed")
+        assert "docs[written_count:]" in hint and "never the whole list" in hint
+        assert "Nothing was stored" not in hint
+        assert ("was not written" in hint) is part_known
+        assert ("read it back" in hint) is not part_known
+
+
+def test_a_batch_that_fails_with_nothing_written_keeps_the_servers_outcome(
+    mode: str, identity: Any
+) -> None:
+    script = Script({opcodes.BATCH_PUT: [fakehoard.error(18, EXISTS, write_outcome="not_applied")]})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.DocumentExistsError) as caught:
+            pc.call(lambda c: bucket(pc, "hash").insert_many([{"n": "1"}, {"n": "2"}]))
+        assert caught.value.write_outcome == "not_applied" and caught.value.written_count is None
+        assert caught.value.hint is not None and caught.value.hint.startswith("Nothing was stored")
+
+
+@pytest.mark.parametrize("outcome", ["unknown", "applied"])
+def test_batch_too_large_whose_outcome_is_not_not_applied_is_never_halved(
+    mode: str, identity: Any, outcome: str
+) -> None:
+    script = Script({opcodes.BATCH_PUT: too_large(outcome)})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.BatchTooLargeError) as caught:
+            pc.call(lambda c: bucket(pc, "hash").insert_many([{"n": 1}, {"n": 2}, {"n": 3}]))
+        assert caught.value.write_outcome == outcome
+        assert len(script.of(opcodes.BATCH_PUT)) == 1  # a duplicate write if it had been halved
+
+
+def test_a_batch_of_one_refused_with_batch_too_large_is_raised_as_it_is(
+    mode: str, identity: Any
+) -> None:
+    script = Script({opcodes.BATCH_PUT: too_large()})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.BatchTooLargeError) as caught:
+            pc.call(lambda c: bucket(pc, "hash").insert_many([{"n": 1}]))
+        assert (caught.value.wire_code, caught.value.write_outcome) == (17, "not_applied")
+        assert len(script.of(opcodes.BATCH_PUT)) == 1
+
+
 def test_a_batch_of_one_that_is_refused_is_raised_as_it_is(mode: str, identity: Any) -> None:
     script = Script({opcodes.BATCH_PUT: NONE_WRITTEN})
     with (
@@ -442,6 +549,97 @@ def test_a_bad_update_is_refused_before_anything_is_sent(
         assert script.requests == []
 
 
+# --- put on a key that is taken, and upsert ------------------------------------------------------
+
+# Recorded from a hoardDB v1.1.0 server: the ERROR payload that answers a PUT of a key that already
+# holds a document, and the UPSERT_OK payload that answers an UPSERT of that key.
+DOCUMENT_EXISTS = bytes.fromhex(
+    "6001000010636f64650012000000026d6573736167650025010000446f63756d656e7420226164612220"
+    "616c72656164792065786973747320696e206275636b6574202275736572732220286461746162617365"
+    "20227632393722292e20546f207265706c6163652069742c2072756e2064622e75736572732e75707365"
+    "7274287b5f69645f3a2022616461222c202e2e2e7d293b20746f206368616e676520736f6d6520666965"
+    "6c64732c2072756e2064622e75736572732e7570646174652822616461222c207b247365743a207b2e2e"
+    "2e7d7d292e20496620796f7520617265207265747279696e6720616e20696e736572742077686f736520"
+    "616e7377657220796f7520646964206e6f74206765742c206974206d61792068617665206265656e2073"
+    "746f7265643a2072657472792077697468207570736572742e000277726974655f6f7574636f6d65000c"
+    "0000006e6f745f6170706c6965640000"
+)
+UPSERT_OK = bytes.fromhex(
+    "3600000002696400040000006164610008737563636573730001026d6573736167650001000000001273"
+    "657100010000000000000000"
+)
+
+
+@pytest.mark.parametrize("facet", ["bucket", "hash", "btree"])
+def test_put_on_a_key_that_holds_a_document_is_a_typed_refusal(
+    mode: str, identity: Any, facet: str
+) -> None:
+    script = Script({opcodes.PUT: [fakehoard.Reply(opcodes.ERROR, DOCUMENT_EXISTS)]})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.DocumentExistsError) as caught:
+            pc.call(lambda c: bucket(pc, facet).put("ada", {"Name": "Ada Lovelace"}))
+        err = caught.value
+        assert (err.code, err.wire_code) == ("DOCUMENT_EXISTS", 18)
+        assert err.write_outcome == "not_applied" and not err.retryable
+        assert err.message.startswith('Document "ada" already exists in bucket "users"')
+        assert err.hint is not None and "upsert(key, doc)" in err.hint
+        assert (err.operation, err.target) == ("put", "app/users")
+        assert len(script.of(opcodes.PUT)) == 1  # a refused write is not sent again
+
+
+def test_insert_of_an_id_that_is_taken_is_the_same_typed_refusal(mode: str, identity: Any) -> None:
+    script = Script({opcodes.PUT: [fakehoard.Reply(opcodes.ERROR, DOCUMENT_EXISTS)]})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.DocumentExistsError) as caught:
+            pc.call(lambda c: bucket(pc, "hash").insert({"_id_": "ada", "Name": "Ada"}))
+        assert caught.value.write_outcome == "not_applied"
+
+
+@pytest.mark.parametrize("facet", ["bucket", "hash", "btree"])
+def test_upsert_sends_upsert_and_replaces(mode: str, identity: Any, facet: str) -> None:
+    script = Script({opcodes.UPSERT: [fakehoard.Reply(opcodes.UPSERT_OK, UPSERT_OK)]})
+    with public(mode, identity, script, write_concern="majority") as (pc, _, _):
+        result = pc.call(lambda c: bucket(pc, facet).upsert("ada", {"Name": "Ada Lovelace"}))
+        assert (result.id, result.seq) == ("ada", 1)
+        (sent,) = script.of(opcodes.UPSERT)
+        assert sent == {
+            "database": "app",
+            "bucket": "users",
+            "key": "ada",
+            "data": {"Name": "Ada Lovelace"},
+            "writeconcern": "majority",
+        }
+        assert script.of(opcodes.PUT) == []
+
+
+@pytest.mark.parametrize("key", ["", None, 7])
+def test_upsert_needs_a_key_and_sends_nothing_without_one(
+    mode: str, identity: Any, key: Any
+) -> None:
+    with public(mode, identity) as (pc, script, _):
+        with pytest.raises(errors.InvalidArgumentError):
+            pc.call(lambda c: bucket(pc, "hash").upsert(key, {"Name": "Ada"}))
+        assert script.requests == []
+
+
+def test_upsert_on_a_queue_is_the_servers_refusal(mode: str, identity: Any) -> None:
+    sentence = 'Bucket "q" is a fifo bucket: a queue has no key to replace; use push'
+    script = Script({opcodes.UPSERT: [fakehoard.error(4, sentence, write_outcome="not_applied")]})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.InvalidArgumentError, match="no key to replace") as caught:
+            pc.call(lambda c: bucket(pc, "bucket", "q").upsert("k", {"n": 1}))
+        assert caught.value.write_outcome == "not_applied"
+
+
+def test_an_upsert_is_never_retried_after_the_connection_is_lost(mode: str, identity: Any) -> None:
+    script = Script({opcodes.UPSERT: [fakehoard.Close()]})
+    with public(mode, identity, script) as (pc, _, _):
+        with pytest.raises(errors.ConnectionFailedError) as caught:
+            pc.call(lambda c: bucket(pc, "hash").upsert("k", {}))
+        assert caught.value.write_outcome == "unknown" and not caught.value.retryable
+        assert len(script.of(opcodes.UPSERT)) == 1
+
+
 # --- push, pop, peek -----------------------------------------------------------------------------
 
 
@@ -478,17 +676,18 @@ def test_a_bad_priority_is_refused_locally(mode: str, identity: Any, bad: Any) -
         assert script.requests == []
 
 
-def test_pop_returns_the_document_or_none_and_is_a_write(mode: str, identity: Any) -> None:
+def test_pop_returns_the_documents_as_a_list_and_is_a_write(mode: str, identity: Any) -> None:
+    found = {"found": True, "items": [{"n": 1, "_id_": "m1"}], "message": ""}
     answers = [
-        reply(opcodes.FIFO_POP_RESPONSE, {"found": True, "data": {"n": 1, "_id_": "m1"}}),
+        reply(opcodes.FIFO_POP_RESPONSE, found),
         reply(opcodes.FIFO_POP_RESPONSE, {"found": False, "message": "queue is empty"}),
         reply(opcodes.FIFO_POP_RESPONSE, {"found": False, "message": "heap is empty"}),
     ]
     script = Script({opcodes.FIFO_POP: answers})
     with public(mode, identity, script, write_concern="one") as (pc, _, _):
-        assert pc.call(lambda c: bucket(pc, "fifo", "q").pop()) == {"n": 1, "_id_": "m1"}
-        assert pc.call(lambda c: bucket(pc, "fifo", "q").pop()) is None
-        assert pc.call(lambda c: bucket(pc, "heap", "h").pop(write_concern="majority")) is None
+        assert pc.call(lambda c: bucket(pc, "fifo", "q").pop()) == [{"n": 1, "_id_": "m1"}]
+        assert pc.call(lambda c: bucket(pc, "fifo", "q").pop()) == []
+        assert pc.call(lambda c: bucket(pc, "heap", "h").pop(write_concern="majority")) == []
         assert [d["writeconcern"] for d in script.of(opcodes.FIFO_POP)] == [
             "one",
             "one",
@@ -496,14 +695,13 @@ def test_pop_returns_the_document_or_none_and_is_a_write(mode: str, identity: An
         ]
 
 
-def test_pop_on_a_hash_bucket_is_the_servers_refusal_not_none(mode: str, identity: Any) -> None:
-    refusal = reply(
-        opcodes.FIFO_POP_RESPONSE,
-        {"found": False, "message": "pop not supported for bucket type hash"},
-    )
+def test_pop_on_a_hash_bucket_is_the_servers_refusal_not_empty(mode: str, identity: Any) -> None:
+    refusal = [
+        fakehoard.error(4, "pop is not defined for hash buckets", write_outcome="not_applied")
+    ]
     with (
         public(mode, identity, Script({opcodes.FIFO_POP: refusal})) as (pc, _, _),
-        pytest.raises(errors.InvalidArgumentError, match="pop not supported"),
+        pytest.raises(errors.InvalidArgumentError, match="pop is not defined"),
     ):
         pc.call(lambda c: bucket(pc).pop())
 

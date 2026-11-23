@@ -21,7 +21,16 @@ pytestmark = pytest.mark.server
 ROOT = readmekit.ROOT
 
 GOLDEN: dict[str, list[str]] = {
-    "hash": ["Ada", "None", "True", "37", "['Grace']", "2", "True False"],
+    "hash": [
+        "DOCUMENT_EXISTS not_applied",
+        "Ada",
+        "None",
+        "True",
+        "37",
+        "['Grace']",
+        "2",
+        "True False",
+    ],
     "btree": [
         "['2026-01-01', '2026-01-02', '2026-01-03', '2026-02-01']",
         "['2026-01-02', '2026-01-03']",
@@ -32,10 +41,10 @@ GOLDEN: dict[str, list[str]] = {
         "welcome-email",
         "resize-photo",
         "send-invoice",
-        "None",
+        "[]",
     ],
-    "lifo": ["delete line", "type b", "type a", "None"],
-    "heap": ["site is down", "slow report", "typo in footer", "None"],
+    "lifo": ["delete line", "type b", "type a", "[]"],
+    "heap": ["site is down", "slow report", "typo in footer", "[]"],
     "blob": ["hello.txt 14", "hello, hoardDB 14 {'type': 'text/plain'}", "None"],
     "store_fields": ["2 1", "tea", "['books']"],
     "typed_bucket": ["1815", "refused: True"],
